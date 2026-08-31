@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PubMed 语义检索 · 文献问答</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body>
+  <div class="page">
+    <header class="header">
+      <div class="brand">
+        <span class="brand-mark">PM</span>
+        <div>
+          <h1>PubMed 语义检索</h1>
+          <p class="tagline">大模型解析语义 → PubMed 检索 → Abstract 存档 → 文献问答</p>
+        </div>
+      </div>
+      <div class="header-tools">
+        <label class="model-picker" for="modelProvider">
+          <span>大模型</span>
+          <select id="modelProvider" title="选择大模型">
+            <option value="glm">GLM 5.2</option>
+            <option value="deepseek">DeepSeek</option>
+          </select>
+        </label>
+        <div class="status" id="statusBadge">检查配置…</div>
+      </div>
+    </header>
+
+    <nav class="page-tabs" role="tablist">
+      <button type="button" class="page-tab active" data-page="search">检索内容</button>
+      <button type="button" class="page-tab" data-page="qa">摘要问答</button>
+      <button type="button" class="page-tab" data-page="study">全文学习</button>
+      <button type="button" class="page-tab" data-page="deep">深度思考</button>
+    </nav>
+
+    <div class="loading hidden" id="loading">处理中，请稍候…</div>
+    <div class="error hidden" id="errorBox"></div>
+
+    <!-- 页面1：检索内容（单列） -->
+    <section class="page-panel active" id="page-search">
+      <div class="panel single-col">
+        <div class="block">
+          <h2 class="block-title">（a）检索内容</h2>
+          <label class="label" for="topic">研究问题 / 检索需求</label>
+          <textarea id="topic" rows="5" placeholder="例如：SGLT2 抑制剂对心衰患者肾功能的影响有哪些高质量证据？&#10;回车确定 · Shift+回车换行"></textarea>
+          <div class="actions">
+            <button type="button" class="btn primary" id="btnSearchConfirm">确定</button>
+            <button type="button" class="btn ghost" id="btnSearchCancel">取消</button>
+          </div>
+        </div>
+
+        <div class="block">
+          <div class="block-head">
+            <h2 class="block-title">（b）PubMed 检索式</h2>
+            <div class="field-inline">
+              <label class="label inline" for="maxResults">最多文献数</label>
+              <input id="maxResults" type="number" min="1" max="1500" value="1500" />
+            </div>
+          </div>
+          <label class="label" for="pubmedQuery">可编辑，确认无误后开始检索</label>
+          <textarea id="pubmedQuery" rows="6" placeholder="由 GLM 生成，也可手动修改&#10;回车开始检索 · Shift+回车换行"></textarea>
+          <div class="actions">
+            <button type="button" class="btn primary" id="btnStartSearch">开始检索</button>
+          </div>
+          <div class="meta" id="searchHint"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 页面2：摘要问答（双列） -->
+    <section class="page-panel" id="page-qa">
+      <div class="qa-layout">
+        <div class="panel qa-answer-panel">
+          <div class="block-head">
+            <h2 class="block-title">回答</h2>
+            <div class="actions tight">
+              <button type="button" class="btn small" id="btnSaveAnswer" title="保存当前问答到本地">保存</button>
+              <button type="button" class="btn small" id="btnCopyAnswer" title="复制回答">复制</button>
+              <button type="button" class="btn small" id="btnNotionAnswer" title="写入 Notion">写入 Notion</button>
+            </div>
+          </div>
+          <article class="answer" id="answerBox">
+            <p class="placeholder">显示回答的内容；保存后再次勾选相同摘要可查看既往问答</p>
+          </article>
+        </div>
+
+        <div class="qa-side">
+          <div class="panel qa-side-panel">
+            <div class="block-head">
+              <h2 class="block-title">近期检索结果</h2>
+              <div class="actions tight">
+                <button type="button" class="btn small" id="btnMoreFiles">更多</button>
+                <button type="button" class="btn small danger-outline" id="btnDeleteFiles">删除</button>
+              </div>
+            </div>
+            <p class="hint">勾选条目后提问；回答将基于选中的检索结果。</p>
+            <ul class="result-list" id="resultList"></ul>
+            <div class="preview-box" id="previewBox">
+              <p class="placeholder">请选择近期生成的检索结果，显示检索说明和摘要预览</p>
+            </div>
+            <div class="qa-ask-anchor">
+              <label class="label" for="askQuestion">提问</label>
+              <textarea id="askQuestion" rows="4" placeholder="提问文本框，回车即为确定 · Shift+回车换行"></textarea>
+              <div class="actions">
+                <button type="button" class="btn primary" id="btnAskConfirm">确定</button>
+                <button type="button" class="btn ghost" id="btnAskCancel">取消</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 页面3：全文学习（三列） -->
+    <section class="page-panel" id="page-study">
+      <div class="study-layout">
+        <div class="panel study-col study-files">
+          <h2 class="block-title">PDF 文件夹</h2>
+          <div class="folder-row">
+            <button type="button" class="btn primary" id="btnOpenFolder">打开文件夹</button>
+          </div>
+          <input
+            id="folderPicker"
+            type="file"
+            webkitdirectory
+            directory
+            multiple
+            accept=".pdf,application/pdf"
+            class="hidden"
+          />
+          <p class="hint" id="studyFolderHint">点击「打开文件夹」选择本地目录</p>
+          <p class="hint">勾选感兴趣的文献后，发送到「深度思考」。</p>
+          <div class="folder-row">
+            <button type="button" class="btn small" id="btnSendDeepThink">发送到深度思考</button>
+          </div>
+          <ul class="pdf-list" id="pdfList"></ul>
+        </div>
+
+        <div class="panel study-col study-text">
+          <h2 class="block-title">全文</h2>
+          <p class="hint">保留原排版与图片；可在 PDF 中选中文字阅读</p>
+          <div class="pdf-viewer" id="pdfViewer">
+            <p class="placeholder">请从左侧选择 PDF 文件</p>
+          </div>
+        </div>
+
+        <div class="panel study-col study-qa">
+          <div class="block-head">
+            <h2 class="block-title">回答</h2>
+            <div class="actions tight">
+              <button type="button" class="btn small" id="btnSaveStudyAnswer" title="保存当前问答到本地">保存</button>
+              <button type="button" class="btn small" id="btnCopyStudyAnswer" title="复制回答">复制</button>
+              <button type="button" class="btn small" id="btnNotionStudyAnswer" title="写入 Notion">写入 Notion</button>
+            </div>
+          </div>
+          <p class="hint">基于当前打开的文献提问；保存后再次打开该文件可查看既往问答</p>
+          <div class="study-answer" id="studyAnswerBox">
+            <p class="placeholder">回答</p>
+          </div>
+          <div class="study-ask-anchor">
+            <label class="label" for="studyAskQuestion">提问</label>
+            <textarea id="studyAskQuestion" rows="4" placeholder="提问文本框，回车即为确定 · Shift+回车换行"></textarea>
+            <div class="actions">
+              <button type="button" class="btn primary" id="btnStudyAskConfirm">确定</button>
+              <button type="button" class="btn ghost" id="btnStudyAskCancel">取消</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 页面4：深度思考（双列） -->
+    <section class="page-panel" id="page-deep">
+      <div class="qa-layout">
+        <div class="panel qa-answer-panel">
+          <div class="block-head">
+            <h2 class="block-title">输出</h2>
+            <div class="actions tight">
+              <button type="button" class="btn small" id="btnCopyDeepAnswer" title="复制输出">复制</button>
+              <button type="button" class="btn small" id="btnNotionDeepAnswer" title="写入 Notion">写入 Notion</button>
+            </div>
+          </div>
+          <article class="answer" id="deepAnswerBox">
+            <p class="placeholder">基于所选全文与你的思路，生成研究计划或文章初稿（含引文）</p>
+          </article>
+        </div>
+
+        <div class="qa-side">
+          <div class="panel qa-side-panel">
+            <div class="block-head">
+              <h2 class="block-title">已打包文献</h2>
+            </div>
+            <p class="hint">在「全文学习」勾选并发送；此处展示当前包内文献。</p>
+            <ul class="result-list" id="deepPackList"></ul>
+            <div class="qa-ask-anchor">
+              <label class="label" for="deepPrompt">思路 / 要求</label>
+              <textarea id="deepPrompt" rows="6" placeholder="例如：综合这些文献，写一份可执行的研究计划；或按综述结构写文章初稿。&#10;回车确定 · Shift+回车换行"></textarea>
+              <div class="actions">
+                <button type="button" class="btn primary" id="btnDeepConfirm">确定</button>
+                <button type="button" class="btn ghost" id="btnDeepCancel">取消</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      本地服务 · 摘要 <code>data/abstracts/</code> · 摘要回答 <code>data/abstract_qa/</code> · PDF 工作区 <code>data/pdfs_workspace/</code> · 全文回答 <code>data/study_qa/</code>
+    </footer>
+  </div>
+
+  <!-- 更多：全部本地结果 -->
+  <div class="modal hidden" id="moreModal" role="dialog" aria-modal="true">
+    <div class="modal-backdrop" id="moreBackdrop"></div>
+    <div class="modal-card">
+      <div class="block-head">
+        <h2 class="block-title">全部本地检索结果</h2>
+        <button type="button" class="btn small ghost" id="btnCloseMore">关闭</button>
+      </div>
+      <ul class="result-list modal-list" id="allResultList"></ul>
+    </div>
+  </div>
+
+  <!-- 写入 Notion -->
+  <div class="modal hidden" id="notionModal" role="dialog" aria-modal="true">
+    <div class="modal-backdrop" id="notionBackdrop"></div>
+    <div class="modal-card notion-modal-card">
+      <div class="block-head">
+        <h2 class="block-title">写入 Notion</h2>
+        <button type="button" class="btn small ghost" id="btnCloseNotion">关闭</button>
+      </div>
+      <p class="hint">确认字段后提交；要点/体会不写入，完整回答写入页面正文。</p>
+      <div class="notion-form">
+        <label class="label" for="notionTitle">标题（提问）</label>
+        <textarea id="notionTitle" rows="2"></textarea>
+        <label class="label" for="notionSummary">一句话总结</label>
+        <input id="notionSummary" type="text" placeholder="可选" />
+        <label class="label" for="notionLearnDate">学习日期</label>
+        <input id="notionLearnDate" type="date" />
+        <label class="label" for="notionSourceName">来源名称</label>
+        <input id="notionSourceName" type="text" />
+        <label class="label" for="notionSourceType">来源类型</label>
+        <select id="notionSourceType">
+          <option value="PubMed摘要">PubMed摘要</option>
+          <option value="PDF全文">PDF全文</option>
+        </select>
+        <label class="label" for="notionTags">标签</label>
+        <input id="notionTags" type="text" placeholder="多个用逗号分隔，默认：写作/科研" />
+        <label class="label" for="notionStatus">状态</label>
+        <select id="notionStatus">
+          <option value="待读">待读</option>
+          <option value="在读">在读</option>
+          <option value="已总结">已总结</option>
+        </select>
+        <label class="label" for="notionImportance">重要性</label>
+        <select id="notionImportance">
+          <option value="⭐">⭐</option>
+          <option value="⭐⭐">⭐⭐</option>
+          <option value="⭐⭐⭐">⭐⭐⭐</option>
+          <option value="⭐⭐⭐⭐">⭐⭐⭐⭐</option>
+          <option value="⭐⭐⭐⭐⭐">⭐⭐⭐⭐⭐</option>
+        </select>
+        <label class="label" for="notionUrl">链接/DOI</label>
+        <input id="notionUrl" type="url" placeholder="可选 https:// 或 DOI" />
+        <label class="label" for="notionAnswer">回答正文（写入页面）</label>
+        <textarea id="notionAnswer" rows="8"></textarea>
+      </div>
+      <div class="actions" style="margin-top: 12px">
+        <button type="button" class="btn primary" id="btnNotionConfirm">确认写入</button>
+        <button type="button" class="btn ghost" id="btnNotionCancel">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>

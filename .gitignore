@@ -1,0 +1,24 @@
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.DS_Store
+*.log
+_pack_log.txt
+dist/
+*.zip
+.env
+.env.bak
+
+# local runtime / user research data (keep folder structure)
+data/abstracts/*
+!data/abstracts/.gitkeep
+data/abstract_qa/*
+!data/abstract_qa/.gitkeep
+data/study_qa/*
+!data/study_qa/.gitkeep
+data/pdfs/*
+!data/pdfs/.gitkeep
+data/pdfs_workspace/
+*.pdf
+templates/*冲突文件*
