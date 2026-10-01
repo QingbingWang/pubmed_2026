@@ -1,4 +1,4 @@
-"""OpenAI-compatible LLM client (GLM / DeepSeek)."""
+"""OpenAI-compatible LLM client (DeepSeek)."""
 
 from __future__ import annotations
 
@@ -170,7 +170,7 @@ class GLMClient:
             if truncated
             else ""
         )
-        # 长文献放在前缀、问题放末尾，便于 GLM/DeepSeek 上下文缓存命中
+        # 长文献放在前缀、问题放末尾，便于上下文缓存命中
         user_prompt = (
             f"以下是 PubMed Abstract 文献全文（txt，约 {uploaded_chars} 字符，"
             f"共 {paper_count} 篇摘要，以 PMID- 计数）。\n"

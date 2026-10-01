@@ -20,7 +20,6 @@
         <label class="model-picker" for="modelProvider">
           <span>大模型</span>
           <select id="modelProvider" title="选择大模型">
-            <option value="glm">GLM 5.2</option>
             <option value="deepseek">DeepSeek</option>
           </select>
         </label>
@@ -60,7 +59,7 @@
             </div>
           </div>
           <label class="label" for="pubmedQuery">可编辑，确认无误后开始检索</label>
-          <textarea id="pubmedQuery" rows="6" placeholder="由 GLM 生成，也可手动修改&#10;回车开始检索 · Shift+回车换行"></textarea>
+          <textarea id="pubmedQuery" rows="6" placeholder="由大模型生成，也可手动修改&#10;回车开始检索 · Shift+回车换行"></textarea>
           <div class="actions">
             <button type="button" class="btn primary" id="btnStartSearch">开始检索</button>
           </div>
@@ -130,8 +129,12 @@
             accept=".pdf,application/pdf"
             class="hidden"
           />
-          <p class="hint" id="studyFolderHint">点击「打开文件夹」选择本地目录</p>
+          <p class="hint" id="studyFolderHint">全文保存在当前检索项目的 _full_pdf</p>
           <p class="hint">勾选感兴趣的文献后，发送到「深度思考」。</p>
+          <label class="pdf-select-all" for="pdfSelectAll">
+            <input id="pdfSelectAll" type="checkbox" />
+            <span>全选</span>
+          </label>
           <div class="folder-row">
             <button type="button" class="btn small" id="btnSendDeepThink">发送到深度思考</button>
           </div>
@@ -208,7 +211,7 @@
     </section>
 
     <footer class="footer">
-      本地服务 · 摘要 <code>data/abstracts/</code> · 摘要回答 <code>data/abstract_qa/</code> · PDF 工作区 <code>data/pdfs_workspace/</code> · 全文回答 <code>data/study_qa/</code>
+      本地服务 · 检索项目（摘要 + <code>_full_pdf</code>）· 摘要回答 <code>data/abstract_qa/</code> · 全文回答 <code>data/study_qa/</code>
     </footer>
   </div>
 

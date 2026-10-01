@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import time
 from datetime import datetime
 from pathlib import Path
@@ -231,32 +232,32 @@ class PubMedClient:
         output_dir: Path | None = None,
         keywords: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Search PubMed, save Abstract-format TXT, return metadata."""
-        pmids = self.search(query, max_results=max_results)
-        if not pmids:
-            return {
-                "pmids": [],
-                "count": 0,
-                "filepath": None,
-                "filename": None,
-                "text": "",
-                "keywords": keywords or [],
-            }
-
-        xml_text = self.fetch_abstract_xml(pmids)
-        abstract_text = self.xml_to_abstract_text(xml_text)
-
-        out_dir = output_dir or config.ABSTRACTS_DIR
-        out_dir.mkdir(parents=True, exist_ok=True)
-
+        """Search PubMed and save abstracts into a new project (or output_dir)."""
         kw_list = [str(k).strip() for k in (keywords or []) if str(k).strip()][:2]
         date_stamp = datetime.now().strftime("%Y%m%d")
-        filename = self._make_filename(kw_list, date_stamp, out_dir)
-        filepath = out_dir / filename
+        pmids = self.search(query, max_results=max_results)
+        abstract_text = ""
+        if pmids:
+            xml_text = self.fetch_abstract_xml(pmids)
+            abstract_text = self.xml_to_abstract_text(xml_text)
 
+        project_dir: Path | None = None
+        pdf_dir: Path | None = None
+        if output_dir is None:
+            project_dir, filename = self._allocate_project(kw_list, date_stamp)
+            out_dir = project_dir
+            pdf_dir = project_dir / "_full_pdf"
+        else:
+            out_dir = output_dir
+            out_dir.mkdir(parents=True, exist_ok=True)
+            filename = self._make_filename(kw_list, date_stamp, out_dir)
+
+        filepath = out_dir / filename
         kw_header = ", ".join(kw_list) if kw_list else ""
+        project_name = project_dir.name if project_dir is not None else ""
         header = (
             f"PubMed Abstract Export\n"
+            f"Project: {project_name}\n"
             f"Keywords: {kw_header}\n"
             f"Query: {query}\n"
             f"Retrieved: {datetime.now().isoformat(timespec='seconds')}\n"
@@ -273,7 +274,40 @@ class PubMedClient:
             "filename": filename,
             "text": abstract_text,
             "keywords": kw_list,
+            "project_dir": str(project_dir) if project_dir is not None else "",
+            "project_name": project_name,
+            "pdf_dir": str(pdf_dir) if pdf_dir is not None else "",
         }
+
+    def _allocate_project(self, keywords: list[str], date_stamp: str) -> tuple[Path, str]:
+        """Copy `_template` into a new project folder. Return (dir, abstract filename)."""
+        root = config.PROJECTS_DIR
+        root.mkdir(parents=True, exist_ok=True)
+        parts = [self._sanitize_token(k) for k in keywords]
+        parts = [p for p in parts if p][:2] or ["pubmed"]
+        base = "_".join(parts)
+
+        def names(suffix: str) -> tuple[str, str]:
+            # 与 _template/_template_abstract_date.txt 对应：{关键词}_abstract_{日期}.txt
+            folder = f"{base}_{date_stamp}{suffix}"
+            abstract = f"{base}_abstract_{date_stamp}{suffix}.txt"
+            return folder, abstract
+
+        folder, abstract = names("")
+        n = 2
+        while (root / folder).exists():
+            folder, abstract = names(f"_{n}")
+            n += 1
+
+        project = root / folder
+        project.mkdir(parents=True, exist_ok=False)
+        template_pdf = root / "_template" / "_full_pdf"
+        dest_pdf = project / "_full_pdf"
+        if template_pdf.is_dir():
+            shutil.copytree(template_pdf, dest_pdf)
+        else:
+            dest_pdf.mkdir(parents=True, exist_ok=True)
+        return project, abstract
 
     @staticmethod
     def _sanitize_token(token: str, max_len: int = 24) -> str:

@@ -28,7 +28,7 @@
   let lastDeepThink = { prompt: "", answer: "", sources: [] };
 
   function getProvider() {
-    return (modelProviderEl && modelProviderEl.value) || "glm";
+    return (modelProviderEl && modelProviderEl.value) || "deepseek";
   }
 
   function showTruncationStatus(data) {
@@ -113,6 +113,9 @@
         .then(() => loadSavedAbstractQa())
         .catch(() => {});
     }
+    if (name === "study") {
+      refreshStudyPdfs().catch(() => {});
+    }
   }
 
   document.querySelectorAll(".page-tab").forEach((tab) => {
@@ -145,7 +148,7 @@
       return data;
     } catch (err) {
       if (err && err.name === "AbortError") {
-        throw new Error("请求超时：GLM 响应过慢或网络异常，请重试");
+        throw new Error("请求超时：模型响应过慢或网络异常，请重试");
       }
       throw err;
     } finally {
@@ -433,8 +436,9 @@
           keywords: latestKeywords.slice(0, 2),
         }),
       });
+      const projectLabel = data.project_name ? `项目 ${data.project_name}` : "本地";
       searchHint.textContent =
-        `检索完成：命中 ${data.count} 篇，已保存 ${data.filename || ""}\n可切换到「摘要问答」页面提问。`;
+        `检索完成：命中 ${data.count} 篇，${projectLabel}\n摘要已保存 ${data.filename || ""}，全文 PDF 将写入该项目的 _full_pdf。\n可切换到「摘要问答」页面提问。`;
       showAllMode = false;
       // 新检索：仅勾选本次结果，避免仍带着上一次文件去问答
       selectedSet.clear();
@@ -457,7 +461,7 @@
     if (!chosen.length) return showError("请先勾选至少一个检索结果");
     setLoading(true);
     try {
-      // 问答开启 GLM 深度推理，可能较慢（最长约 10 分钟）
+      // 问答开启深度推理，可能较慢（最长约 10 分钟）
       const data = await api(
         "/api/answer",
         {
@@ -615,16 +619,35 @@
   const studySelectedSet = new Set();
   /** 已发送到深度思考的文献包 */
   let deepPack = [];
+  /** 当前全文学习所在项目，切换项目时清空勾选 */
+  let studyFolderKey = "";
 
   if (window.pdfjsLib) {
     pdfjsLib.GlobalWorkerOptions.workerSrc =
       "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
   }
 
+  function syncPdfSelectAll() {
+    const box = $("pdfSelectAll");
+    if (!box) return;
+    const names = cachedPdfs.map((f) => f.filename);
+    if (!names.length) {
+      box.checked = false;
+      box.indeterminate = false;
+      box.disabled = true;
+      return;
+    }
+    box.disabled = false;
+    const selected = names.filter((name) => studySelectedSet.has(name)).length;
+    box.checked = selected === names.length;
+    box.indeterminate = selected > 0 && selected < names.length;
+  }
+
   function renderPdfList(pdfs) {
     cachedPdfs = pdfs || [];
     if (!pdfs.length) {
       pdfListEl.innerHTML = "<li><span class='pdf-size'>该文件夹下没有 PDF</span></li>";
+      syncPdfSelectAll();
       return;
     }
     pdfListEl.innerHTML = pdfs
@@ -651,8 +674,10 @@
         else studySelectedSet.delete(cb.value);
         const li = cb.closest("li");
         if (li) li.classList.toggle("checked", cb.checked);
+        syncPdfSelectAll();
       });
     });
+    syncPdfSelectAll();
     pdfListEl.querySelectorAll(".pdf-name[data-open]").forEach((el) => {
       el.addEventListener("click", () => openPdf(el.dataset.open));
     });
@@ -750,6 +775,29 @@
     return `${text}\n\n【引文来源】\n${lines.join("\n")}`;
   }
 
+  async function refreshStudyPdfs() {
+    const data = await api("/api/study/pdfs");
+    const key = data.project || data.folder || "";
+    const pdfs = data.pdfs || [];
+    if (key !== studyFolderKey) {
+      studyFolderKey = key;
+      studySelectedSet.clear();
+      if (currentPdf && !pdfs.some((f) => f.filename === currentPdf)) {
+        currentPdf = "";
+        pdfViewer.innerHTML = "<p class='placeholder'>请从左侧选择 PDF 文件</p>";
+        studyAnswerBox.innerHTML = "<p class='placeholder'>回答</p>";
+      }
+    }
+    const names = new Set(pdfs.map((f) => f.filename));
+    [...studySelectedSet].forEach((name) => {
+      if (!names.has(name)) studySelectedSet.delete(name);
+    });
+    if (studyFolderHint) {
+      studyFolderHint.textContent = `当前项目：${data.folder || "未命名"}（${data.count || 0} 个 PDF）`;
+    }
+    renderPdfList(pdfs);
+  }
+
   async function uploadPdfFiles(fileList, folderName) {
     const form = new FormData();
     form.append("folder_name", folderName || "已选文件夹");
@@ -793,7 +841,8 @@
         setLoading(true);
         try {
           const data = await uploadPdfFiles(picked.files, picked.name);
-          studyFolderHint.textContent = `当前：${data.folder}（${data.count} 个 PDF）`;
+          studyFolderKey = data.project || data.folder || "";
+          studyFolderHint.textContent = `当前项目：${data.folder}（${data.count} 个 PDF）`;
           currentPdf = "";
           studySelectedSet.clear();
           pdfViewer.innerHTML = "<p class='placeholder'>请从左侧选择 PDF 文件</p>";
@@ -822,7 +871,8 @@
       const rel = files[0].webkitRelativePath || files[0].name;
       const folderName = rel.includes("/") ? rel.split("/")[0] : "已选文件夹";
       const data = await uploadPdfFiles(files, folderName);
-      studyFolderHint.textContent = `当前：${data.folder}（${data.count} 个 PDF）`;
+      studyFolderKey = data.project || data.folder || "";
+      studyFolderHint.textContent = `当前项目：${data.folder}（${data.count} 个 PDF）`;
       currentPdf = "";
       studySelectedSet.clear();
       pdfViewer.innerHTML = "<p class='placeholder'>请从左侧选择 PDF 文件</p>";
@@ -1020,6 +1070,15 @@
       setLoading(false);
     }
   }
+
+  $("pdfSelectAll")?.addEventListener("change", () => {
+    const on = $("pdfSelectAll").checked;
+    cachedPdfs.forEach((f) => {
+      if (on) studySelectedSet.add(f.filename);
+      else studySelectedSet.delete(f.filename);
+    });
+    renderPdfList(cachedPdfs);
+  });
 
   $("btnOpenFolder").addEventListener("click", openFolderDialog);
   $("btnSendDeepThink")?.addEventListener("click", sendToDeepThink);

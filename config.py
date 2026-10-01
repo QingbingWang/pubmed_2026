@@ -22,9 +22,11 @@ STUDY_QA_DIR.mkdir(parents=True, exist_ok=True)
 ABSTRACT_QA_DIR = DATA_DIR / "abstract_qa"
 ABSTRACT_QA_DIR.mkdir(parents=True, exist_ok=True)
 
-GLM_API_KEY = os.getenv("GLM_API_KEY", "").strip()
-GLM_BASE_URL = os.getenv("GLM_BASE_URL", "https://open.bigmodel.cn/api/paas/v4/").strip()
-GLM_MODEL = os.getenv("GLM_MODEL", "glm-5.2").strip()
+# 检索项目根目录。每次新检索在此按 _template 新建一个项目：
+#   {关键词}_{日期}/{关键词}_abstract_{日期}.txt
+#   {关键词}_{日期}/_full_pdf/
+_raw_projects = os.getenv("PROJECTS_DIR", "").strip().strip('"')
+PROJECTS_DIR = Path(_raw_projects) if _raw_projects else (DATA_DIR / "projects")
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "").strip()
 DEEPSEEK_BASE_URL = os.getenv(
@@ -32,8 +34,10 @@ DEEPSEEK_BASE_URL = os.getenv(
 ).strip()
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-pro").strip()
 
-# 默认提供方：glm | deepseek
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "glm").strip().lower() or "glm"
+# 默认提供方：deepseek（已取消 GLM）
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "deepseek").strip().lower() or "deepseek"
+if LLM_PROVIDER == "glm":
+    LLM_PROVIDER = "deepseek"
 
 NCBI_API_KEY = os.getenv("NCBI_API_KEY", "").strip()
 NCBI_EMAIL = os.getenv("NCBI_EMAIL", "").strip()
@@ -52,16 +56,6 @@ def notion_configured() -> bool:
     return _key_ok(NOTION_API_KEY) and bool(NOTION_DATABASE_ID)
 
 PROVIDERS: dict[str, dict] = {
-    "glm": {
-        "id": "glm",
-        "label": "GLM 5.2",
-        "api_key": GLM_API_KEY,
-        "base_url": GLM_BASE_URL,
-        "model": GLM_MODEL,
-        # 智谱深度推理
-        "reasoning_effort": "max",
-        "supports_thinking": True,
-    },
     "deepseek": {
         "id": "deepseek",
         "label": "DeepSeek",
@@ -86,16 +80,17 @@ def provider_configured(provider_id: str) -> bool:
 
 def resolve_provider(provider_id: str | None = None) -> str:
     """Pick a usable provider id; raise if none configured."""
-    pid = (provider_id or LLM_PROVIDER or "glm").strip().lower()
+    pid = (provider_id or LLM_PROVIDER or "deepseek").strip().lower()
+    if pid == "glm":
+        pid = "deepseek"
     if pid not in PROVIDERS:
         raise ValueError(f"未知大模型提供方: {provider_id}")
     if provider_configured(pid):
         return pid
-    # 请求的未配置时，回退到任一已配置的
-    for candidate in ("glm", "deepseek"):
+    for candidate in ("deepseek",):
         if provider_configured(candidate):
             return candidate
-    raise ValueError("请在 .env 中配置 GLM_API_KEY 或 DEEPSEEK_API_KEY")
+    raise ValueError("请在 .env 中配置 DEEPSEEK_API_KEY")
 
 
 def list_providers() -> list[dict]:

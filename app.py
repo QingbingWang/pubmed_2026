@@ -1,4 +1,4 @@
-"""Local Chrome web app for PubMed semantic search + GLM Q&A."""
+"""Local Chrome web app for PubMed semantic search + DeepSeek Q&A."""
 
 from __future__ import annotations
 
@@ -33,18 +33,62 @@ def _provider_from_payload(data: dict | None = None) -> str | None:
     return raw or None
 
 
+def _abstract_path_allowed(path: Path) -> bool:
+    """Allow legacy data/abstracts/*.txt and PROJECTS_DIR/<project>/*.txt."""
+    if not _is_abstract_txt(path):
+        return False
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return False
+    if resolved.parent == config.ABSTRACTS_DIR.resolve():
+        return True
+    projects = config.PROJECTS_DIR.resolve()
+    parent = resolved.parent
+    if parent.name.startswith("_") or parent.name.startswith("."):
+        return False
+    return parent.parent == projects
+
+
+def _iter_abstract_txts():
+    root = config.ABSTRACTS_DIR
+    if root.is_dir():
+        for path in root.glob("*.txt"):
+            if _is_abstract_txt(path):
+                yield path
+    projects = config.PROJECTS_DIR
+    if projects.is_dir():
+        for proj in projects.iterdir():
+            if not proj.is_dir() or proj.name.startswith("_") or proj.name.startswith("."):
+                continue
+            for path in proj.glob("*.txt"):
+                if _is_abstract_txt(path):
+                    yield path
+
+
 def _safe_abstract_path(name_or_path: str) -> Path | None:
-    """Resolve a path only if it is inside ABSTRACTS_DIR."""
-    abstracts_root = config.ABSTRACTS_DIR.resolve()
-    candidate = Path(name_or_path)
-    if not candidate.is_absolute():
-        candidate = abstracts_root / candidate.name
-    resolved = candidate.resolve()
-    if abstracts_root not in resolved.parents and resolved.parent != abstracts_root:
+    """Resolve an abstract txt inside the legacy dir or a search project."""
+    raw = (name_or_path or "").strip().replace("\\", "/")
+    if not raw:
         return None
-    if resolved.suffix.lower() != ".txt":
+    candidate = Path(raw)
+    if ".." in candidate.parts:
         return None
-    return resolved
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+        return resolved if _abstract_path_allowed(resolved) else None
+    if len(candidate.parts) == 2:
+        resolved = (config.PROJECTS_DIR / candidate).resolve()
+        if resolved.is_file() and _abstract_path_allowed(resolved):
+            return resolved
+        return None
+    if len(candidate.parts) != 1 or candidate.suffix.lower() != ".txt":
+        return None
+    matches = [p for p in _iter_abstract_txts() if p.name == candidate.name]
+    if not matches:
+        return None
+    matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return matches[0]
 
 
 def _parse_file_meta(path: Path) -> dict:
@@ -124,7 +168,7 @@ def _strip_abstract_header(text: str) -> str:
 
 
 def _list_abstract_files() -> list[dict]:
-    files = [p for p in config.ABSTRACTS_DIR.glob("*.txt") if _is_abstract_txt(p)]
+    files = list(_iter_abstract_txts())
     files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     items: list[dict] = []
     for p in files:
@@ -147,7 +191,7 @@ def health():
     try:
         default_id = config.resolve_provider(config.LLM_PROVIDER)
     except ValueError:
-        default_id = config.LLM_PROVIDER if config.LLM_PROVIDER in config.PROVIDERS else "glm"
+        default_id = config.LLM_PROVIDER if config.LLM_PROVIDER in config.PROVIDERS else "deepseek"
     default = next((p for p in providers if p["id"] == default_id), providers[0])
     return jsonify(
         {
@@ -199,6 +243,9 @@ def api_search():
             max_results=max_results_int,
             keywords=list(keywords)[:2],
         )
+        project_dir = (result.get("project_dir") or "").strip()
+        if project_dir:
+            _set_active_project(Path(project_dir))
         return jsonify({"ok": True, **result})
     except Exception as exc:  # noqa: BLE001
         return jsonify({"ok": False, "error": str(exc)}), 500
@@ -299,7 +346,7 @@ def api_download_file(filename: str):
     path = _safe_abstract_path(safe)
     if path is None or not path.exists():
         return jsonify({"ok": False, "error": "文件不存在"}), 404
-    return send_from_directory(config.ABSTRACTS_DIR, safe, as_attachment=False)
+    return send_from_directory(path.parent, path.name, as_attachment=False)
 
 
 @app.post("/api/files/delete")
@@ -327,11 +374,54 @@ def api_delete_files():
 
 _study_folder: Path | None = None
 _study_folder_label: str = ""
+_active_project: Path | None = None
+
+
+def _iter_projects() -> list[Path]:
+    root = config.PROJECTS_DIR
+    if not root.is_dir():
+        return []
+    items = [
+        p
+        for p in root.iterdir()
+        if p.is_dir() and not p.name.startswith("_") and not p.name.startswith(".")
+    ]
+    items.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return items
+
+
+def _set_active_project(project: Path) -> None:
+    """Point full-text study at this project's `_full_pdf` folder."""
+    global _active_project, _study_folder, _study_folder_label
+    resolved = project.resolve()
+    projects = config.PROJECTS_DIR.resolve()
+    if resolved.parent != projects or resolved.name.startswith("_"):
+        raise ValueError("非法项目目录")
+    pdf_dir = resolved / "_full_pdf"
+    pdf_dir.mkdir(parents=True, exist_ok=True)
+    _active_project = resolved
+    _study_folder = pdf_dir.resolve()
+    _study_folder_label = resolved.name
+
+
+def _ensure_study_folder() -> Path:
+    global _study_folder, _study_folder_label
+    if _study_folder and _study_folder.is_dir():
+        return _study_folder
+    projects = _iter_projects()
+    if projects:
+        _set_active_project(projects[0])
+        return _study_folder  # type: ignore[return-value]
+    workspace = config.PDFS_WORKSPACE_DIR.resolve()
+    workspace.mkdir(parents=True, exist_ok=True)
+    _study_folder = workspace
+    _study_folder_label = _study_folder_label or "工作区"
+    return workspace
 
 
 def _resolve_pdf_in_study_folder(filename: str) -> Path:
     global _study_folder
-    folder = _study_folder or config.PDFS_WORKSPACE_DIR.resolve()
+    folder = _ensure_study_folder()
     safe = Path(filename).name
     path = (folder / safe).resolve()
     root = folder.resolve()
@@ -495,9 +585,9 @@ def api_study_upload():
     if not files:
         return jsonify({"ok": False, "error": "未选择任何文件"}), 400
 
-    workspace = config.PDFS_WORKSPACE_DIR.resolve()
+    workspace = _ensure_study_folder()
     workspace.mkdir(parents=True, exist_ok=True)
-    # 每次打开文件夹时清空旧工作区，避免混入上次文件
+    # 每次打开文件夹时清空当前项目的全文目录，避免混入上次文件
     for old in workspace.glob("*.pdf"):
         try:
             old.unlink()
@@ -530,12 +620,16 @@ def api_study_upload():
         return jsonify({"ok": False, "error": "文件夹中没有 PDF 文件"}), 400
 
     _study_folder = workspace
-    _study_folder_label = label
+    if _active_project is not None:
+        _study_folder_label = _active_project.name
+    else:
+        _study_folder_label = label
     pdfs = list_pdfs(workspace)
     return jsonify(
         {
             "ok": True,
-            "folder": label,
+            "folder": _study_folder_label,
+            "project": str(_active_project or ""),
             "pdfs": pdfs,
             "count": len(pdfs),
         }
@@ -546,17 +640,14 @@ def api_study_upload():
 def api_study_pdfs():
     from services.pdf_reader import list_pdfs
 
-    global _study_folder
     try:
-        folder = _study_folder or config.PDFS_WORKSPACE_DIR.resolve()
-        if not folder.is_dir():
-            folder = config.PDFS_WORKSPACE_DIR.resolve()
-        _study_folder = folder
+        folder = _ensure_study_folder()
         pdfs = list_pdfs(folder)
         return jsonify(
             {
                 "ok": True,
-                "folder": _study_folder_label or str(folder),
+                "folder": _study_folder_label or folder.name,
+                "project": str(_active_project or ""),
                 "pdfs": pdfs,
                 "count": len(pdfs),
             }
